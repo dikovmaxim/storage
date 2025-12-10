@@ -1,7 +1,6 @@
 
-use crate::filesystem::FSEntry::{FSEntry, FSEntryBase, Metadata};
+use super::FSEntry::{FSEntry, FSEntryBase, Metadata};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SymlinkEntry {
     pub base: FSEntryBase,
     pub target: Box<dyn FSEntry>,

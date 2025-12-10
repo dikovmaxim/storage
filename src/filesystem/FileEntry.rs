@@ -1,7 +1,7 @@
-use crate::filesystem::FSEntry::FSEntry;
+use super::FSEntry::{FSEntry, FSEntryBase, Metadata};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct FileEntry{
+pub struct FileEntry{
     base: FSEntryBase,
     pub size: u64,
     chunks: Vec<u64>, // List of chunk IDs, not the actual chunks because stored on different nodes
@@ -40,15 +40,15 @@ impl FileEntry {
         self.chunks.clone()
     }
 
-    pub fn get_chunks(&self, offset: usize, length: usize) -> Vec<u64> {
-        self.chunks[offset..offset + length].to_vec().clone()
+    pub fn get_chunks_in_range(&self, offset: usize, length: usize) -> Vec<u64> {
+        self.chunks[offset..offset + length].to_vec()
     }
 
     pub fn set_chunks(&mut self, chunks: Vec<u64>) {
         self.chunks = chunks;
     }
 
-    pub fn set_chunks(&mut self, chunks: Vec<u64>, offset: usize) {
+    pub fn set_chunks_at_offset(&mut self, chunks: Vec<u64>, offset: usize) {
         for (i, &chunk_id) in chunks.iter().enumerate() {
             if offset + i < self.chunks.len() {
                 self.chunks[offset + i] = chunk_id;

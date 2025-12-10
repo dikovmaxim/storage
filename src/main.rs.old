@@ -1,0 +1,140 @@
+use std::fs::File as StdFile;
+use std::io::Read;
+use std::path::Path;
+use sha2::{Sha256, Digest};
+use rand::Rng;
+use crate::filesystem::FileEntry::FileEntry;
+use crate::filesystem::FSEntry::{FSEntryBase, Metadata};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+mod filesystem;
+
+static CHUNK_SIZE: usize = 4096; // 4KB chunk size
+
+fn main() {
+    let file_primitive = FilePrimitive::createFromFile("image.png");
+    println!("{}", file_primitive.to_string());
+    for chunk in file_primitive.get_chunks() {
+        println!("{}", chunk.to_string());
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FileChunk {
+    chunk_id: u64,
+    data: Vec<u8>,
+    chunk_index: usize,
+    chunk_checksum: [u8; 32], // Example: SHA-256 checksum
+}
+
+impl FileChunk {
+    fn to_string(&self) -> String {
+        format!(
+            "FileChunk {{ chunk_id: {}, idx: {}, checksum: {:x?} }}",
+            self.chunk_id,
+            self.chunk_index,
+            self.chunk_checksum
+        )
+    }
+}
+
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+//primitive representation of a file including its chunks, not actual storage
+struct FilePrimitive {
+    name: String,
+    size: u64,
+    chunks: Vec<FileChunk>,
+    checksum: [u8; 32],
+}
+
+fn calculate_checksum(data: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    let result = hasher.finalize();
+    let mut checksum = [0u8; 32];
+    checksum.copy_from_slice(&result);
+    return checksum
+}
+
+
+fn make_chunk_id(idx: u64, chunk_checksum: &[u8; 32], file_checksum: &[u8; 32]) -> u64 {
+    let mut hasher = Sha256::new();
+    hasher.update(&idx.to_le_bytes());
+    hasher.update(chunk_checksum);
+    hasher.update(file_checksum);
+    let result = hasher.finalize();
+    u64::from_le_bytes(result[0..8].try_into().unwrap())
+}
+
+impl FilePrimitive {
+    fn new(name: String, size: u64, chunks: Vec<FileChunk>, checksum: [u8; 32]) -> Self {
+        FilePrimitive {
+            name,
+            size,
+            chunks,
+            checksum,
+        }
+    }
+
+    fn createFromFile(path: &str) -> Self {
+        let mut file = StdFile::open(Path::new(path)).expect("Failed to open file");
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer).expect("Failed to read file");
+        let file_size = buffer.len() as u64;
+        let file_checksum = calculate_checksum(&buffer);
+        let mut chunks = Vec::new();
+        for (i, chunk) in buffer.chunks(CHUNK_SIZE).enumerate() {
+            let bytes = chunk.to_vec();
+            let chunk_checksum = calculate_checksum(&bytes);
+            let chunk_index = i;
+            let chunk_id = make_chunk_id(i as u64, &chunk_checksum, &file_checksum);
+            let file_chunk = FileChunk {
+                chunk_id,
+                data: bytes,
+                chunk_index,
+                chunk_checksum,
+            };
+            chunks.push(file_chunk);
+        }
+
+        return FilePrimitive::new(
+            String::from(path),
+            file_size,
+            chunks,
+            file_checksum
+        )
+    }
+
+    fn get_file_struct(&self) -> FileEntry {
+        let chunk_ids: Vec<u64> = self.chunks.iter().map(|chunk| chunk.chunk_id).collect();
+        let inode = rand::rng().random::<u64>();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let metadata = Metadata {
+            created_at: now,
+            modified_at: now,
+            permissions: 0o644,
+        };
+        let base = FSEntryBase {
+            inode,
+            name: self.name.clone(),
+            metadata,
+        };
+        FileEntry::new(base, self.size, chunk_ids, self.checksum)
+    }
+
+    fn get_chunks(&self) -> &Vec<FileChunk> {
+        &self.chunks
+    }
+
+    fn to_string(&self) -> String {
+        format!(
+            "FilePrimitive {{ name: {}, size: {}, chunks: {}, checksum: {:x?} }}",
+            self.name,
+            self.size,
+            self.chunks.len(),
+            self.checksum
+        )
+    }
+}
+

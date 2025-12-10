@@ -1,8 +1,7 @@
 use std::collections::HashMap;
-use crate::filesystem::FSEntry::{FSEntry, FSEntryBase, Metadata};
+use super::FSEntry::{FSEntry, FSEntryBase, Metadata};
 
 
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirEntry {
     pub base: FSEntryBase,
     pub children: HashMap<u64, Box<dyn FSEntry>>,
@@ -46,7 +45,7 @@ impl DirEntry {
         self.children.values().collect()
     }
 
-    pub fn list_children(&self, offset: usize, length: usize) -> Vec<&Box<dyn FSEntry>> {
+    pub fn list_children_range(&self, offset: usize, length: usize) -> Vec<&Box<dyn FSEntry>> {
         self.children.values().skip(offset).take(length).collect()
     }
 }

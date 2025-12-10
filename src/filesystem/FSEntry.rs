@@ -13,7 +13,7 @@ pub struct FSEntryBase {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Metadata {
-    created_at: u64,
-    modified_at: u64,
-    permissions: u16,
+    pub created_at: u64,
+    pub modified_at: u64,
+    pub permissions: u16,
 }

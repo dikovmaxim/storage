@@ -1,136 +1,98 @@
-use std::fs::File as StdFile;
-use std::io::{Read, Result};
+use fuse::{FileType, Request, FileAttr, Filesystem, ReplyAttr, ReplyDirectory, ReplyData, ReplyEntry, Session};
+use time::Timespec;
+use std::ffi::OsStr;
 use std::path::Path;
-use sha2::{Sha256, Digest};
-use rand::Rng;
+use log::info;
 
-static CHUNK_SIZE: usize = 4096; // 4KB chunk size
+// Define a basic structure for the filesystem
+struct MyFS;
+
+impl Filesystem for MyFS {
+    // Get file attributes (metadata)
+    fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
+        info!("Getting attributes for inode: {}", ino);
+
+        // You can map this to a network resource if needed
+        let file_attr = FileAttr {
+            ino,
+            size: 0, // Replace with actual file size from network resource
+            blocks: 0,
+            atime: Timespec::new(0, 0),
+            mtime: Timespec::new(0, 0),
+            ctime: Timespec::new(0, 0),
+            crtime: Timespec::new(0, 0),
+            kind: FileType::Directory, // Modify to File for actual files
+            perm: 0o755, // Permissions
+            nlink: 1, // Number of links (e.g., for a file or dir)
+            uid: 1000,
+            gid: 1000,
+            rdev: 0,
+            flags: 0,
+        };
+        reply.attr(&Timespec::new(1, 0), &file_attr);
+    }
+
+    // Read the contents of a directory (or file)
+    fn readdir(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64, mut reply: ReplyDirectory) {
+        info!("Reading directory with inode: {}", ino);
+        
+        // Normally, you would fetch the contents from a network resource.
+        // Here we just return a mock directory listing:
+        if offset == 0 {
+            reply.add(1, 1, FileType::RegularFile, "file1.txt");
+            reply.add(2, 2, FileType::RegularFile, "file2.txt");
+        }
+        reply.ok();
+    }
+
+    // Handle reading from a file (network file reading example)
+    fn read(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64, size: u32, reply: ReplyData) {
+        info!("Reading file with inode: {}, offset: {}, size: {}", ino, offset, size);
+
+        // In a real implementation, you'd fetch this from the network.
+        let dummy_content = b"Hello from networking filesystem!";
+        let start = offset as usize;
+        let end = (start + size as usize).min(dummy_content.len());
+
+        reply.data(&dummy_content[start..end]);
+    }
+
+    // Create a directory
+    fn mkdir(&mut self, _req: &Request, parent: u64, name: &OsStr, mode: u32, reply: ReplyEntry) {
+        info!("Creating directory: {} under parent inode: {}", name.to_str().unwrap(), parent);
+
+        // Implement network call to create directory if needed
+        let attr = FileAttr {
+            ino: 1,
+            size: 0,
+            blocks: 0,
+            atime: Timespec::new(0, 0),
+            mtime: Timespec::new(0, 0),
+            ctime: Timespec::new(0, 0),
+            crtime: Timespec::new(0, 0),
+            kind: FileType::Directory,
+            perm: mode as u16,
+            nlink: 2,
+            uid: 1000,
+            gid: 1000,
+            rdev: 0,
+            flags: 0,
+        };
+        reply.entry(&Timespec::new(1, 0), &attr, 0);
+    }
+}
 
 fn main() {
-    let file_primitive = FilePrimitive::createFromFile("image.png");
-    println!("{}", file_primitive.to_string());
-    for chunk in file_primitive.get_chunks() {
-        println!("{}", chunk.to_string());
-    }
+    // Initialize logger
+    env_logger::init();
+
+    // Set up FUSE session
+    let fs = MyFS;
+    let mount_point = Path::new("/home/max/Desktop/storage/testfs");
+
+    let mut session = Session::new(fs, &mount_point, &[]).unwrap();
+    session.run().unwrap();
+
+    // Your program will now be running and waiting for filesystem operations
+    info!("Filesystem mounted at: {:?}", mount_point);
 }
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct FileChunk {
-    chunk_id: u64,
-    data: Vec<u8>,
-    chunk_index: usize,
-    chunk_checksum: [u8; 32], // Example: SHA-256 checksum
-}
-
-impl FileChunk {
-    fn to_string(&self) -> String {
-        format!(
-            "FileChunk {{ chunk_id: {}, idx: {}, checksum: {:x?} }}",
-            self.chunk_id,
-            self.chunk_index,
-            self.chunk_checksum
-        )
-    }
-}
-
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-//primitive representation of a file including its chunks, not actual storage
-struct FilePrimitive {
-    name: String,
-    size: u64,
-    chunks: Vec<FileChunk>,
-    checksum: [u8; 32],
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct File {
-    name: String,
-    size: u64,
-    chunks: Vec<u64>,
-    checksum: [u8; 32],
-}
-
-fn calculate_checksum(data: &[u8]) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(data);
-    let result = hasher.finalize();
-    let mut checksum = [0u8; 32];
-    checksum.copy_from_slice(&result);
-    return checksum
-}
-
-
-fn make_chunk_id(idx: u64, chunk_checksum: &[u8; 32], file_checksum: &[u8; 32]) -> u64 {
-    let mut hasher = Sha256::new();
-    hasher.update(&idx.to_le_bytes());
-    hasher.update(chunk_checksum);
-    hasher.update(file_checksum);
-    let result = hasher.finalize();
-    u64::from_le_bytes(result[0..8].try_into().unwrap())
-}
-
-impl FilePrimitive {
-    fn new(name: String, size: u64, chunks: Vec<FileChunk>, checksum: [u8; 32]) -> Self {
-        FilePrimitive {
-            name,
-            size,
-            chunks,
-            checksum,
-        }
-    }
-
-    fn createFromFile(path: &str) -> Self {
-        let mut file = StdFile::open(Path::new(path)).expect("Failed to open file");
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer).expect("Failed to read file");
-        let file_size = buffer.len() as u64;
-        let file_checksum = calculate_checksum(&buffer);
-        let mut chunks = Vec::new();
-        for (i, chunk) in buffer.chunks(CHUNK_SIZE).enumerate() {
-            let bytes = chunk.to_vec();
-            let chunk_checksum = calculate_checksum(&bytes);
-            let chunk_index = i;
-            let chunk_id = make_chunk_id(i as u64, &chunk_checksum, &file_checksum);
-            let file_chunk = FileChunk {
-                chunk_id,
-                data: bytes,
-                chunk_index,
-                chunk_checksum,
-            };
-            chunks.push(file_chunk);
-        }
-
-        return FilePrimitive::new(
-            String::from(path),
-            file_size,
-            chunks,
-            file_checksum
-        )
-    }
-
-    fn get_file_struct(&self) -> File {
-        let chunk_ids: Vec<u64> = self.chunks.iter().map(|chunk| chunk.chunk_id).collect();
-        File {
-            name: self.name.clone(),
-            size: self.size,
-            chunks: chunk_ids,
-            checksum: self.checksum,
-        }
-    }
-
-    fn get_chunks(&self) -> &Vec<FileChunk> {
-        &self.chunks
-    }
-
-    fn to_string(&self) -> String {
-        format!(
-            "FilePrimitive {{ name: {}, size: {}, chunks: {}, checksum: {:x?} }}",
-            self.name,
-            self.size,
-            self.chunks.len(),
-            self.checksum
-        )
-    }
-}
-
