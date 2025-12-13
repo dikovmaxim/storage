@@ -267,6 +267,7 @@ version = "0.1.0"
 dependencies = [
  "env_logger",
  "fuse",
+ "libc",
  "log 0.4.29",
  "rand",
  "sha2",

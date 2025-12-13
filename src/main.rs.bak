@@ -1,0 +1,174 @@
+use fuse::{
+    FileType, Request, FileAttr, Filesystem, ReplyAttr, ReplyDirectory,
+    ReplyData, ReplyEntry, ReplyOpen, Session,
+};
+use time::Timespec;
+use std::ffi::OsStr;
+use std::path::Path;
+use log::info;
+use libc;
+
+const TTL: Timespec = Timespec { sec: 1, nsec: 0 }; // 1s cache
+
+const ROOT_INO: u64 = 1;
+const FILE1_INO: u64 = 2;
+const FILE2_INO: u64 = 3;
+
+fn file_attr(ino: u64) -> FileAttr {
+    match ino {
+        ROOT_INO => FileAttr {
+            ino: ROOT_INO,
+            size: 0,
+            blocks: 0,
+            atime: Timespec::new(0, 0),
+            mtime: Timespec::new(0, 0),
+            ctime: Timespec::new(0, 0),
+            crtime: Timespec::new(0, 0),
+            kind: FileType::Directory,
+            perm: 0o755,
+            nlink: 2,
+            uid: 1000,
+            gid: 1000,
+            rdev: 0,
+            flags: 0,
+        },
+        FILE1_INO | FILE2_INO => FileAttr {
+            ino,
+            size: 32, // or dummy_content.len() as u64
+            blocks: 1,
+            atime: Timespec::new(0, 0),
+            mtime: Timespec::new(0, 0),
+            ctime: Timespec::new(0, 0),
+            crtime: Timespec::new(0, 0),
+            kind: FileType::RegularFile,
+            perm: 0o644,
+            nlink: 1,
+            uid: 1000,
+            gid: 1000,
+            rdev: 0,
+            flags: 0,
+        },
+        _ => unreachable!(),
+    }
+}
+
+// Define a basic structure for the filesystem
+struct MyFS;
+
+impl Filesystem for MyFS {
+    fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
+        println!("getattr ino={}", ino);
+
+        match ino {
+            ROOT_INO | FILE1_INO | FILE2_INO => {
+                let attr = file_attr(ino);
+                reply.attr(&TTL, &attr);
+            }
+            _ => reply.error(libc::ENOENT),
+        }
+    }
+
+    /// Map (parent inode, name) -> inode
+    fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
+        println!("lookup parent={}, name={:?}", parent, name);
+
+        if parent != ROOT_INO {
+            reply.error(libc::ENOENT);
+            return;
+        }
+
+        let name = name.to_str().unwrap_or("");
+
+        let ino = match name {
+            "file1.txt" => FILE1_INO,
+            "file2.txt" => FILE2_INO,
+            _ => {
+                reply.error(libc::ENOENT);
+                return;
+            }
+        };
+
+        let attr = file_attr(ino);
+        reply.entry(&TTL, &attr, 0);
+    }
+
+    fn readdir(
+        &mut self,
+        _req: &Request,
+        ino: u64,
+        _fh: u64,
+        offset: i64,
+        mut reply: ReplyDirectory,
+    ) {
+        println!("readdir ino={}, offset={}", ino, offset);
+
+        if ino != ROOT_INO {
+            reply.error(libc::ENOENT);
+            return;
+        }
+
+        // FUSE expects you to honor the offset for pagination.
+        // 0: .  1: ..  2: file1  3: file2
+        if offset == 0 {
+            reply.add(ROOT_INO, 1, FileType::Directory, ".");
+            reply.add(ROOT_INO, 2, FileType::Directory, "..");
+            reply.add(FILE1_INO, 3, FileType::RegularFile, "file1.txt");
+            reply.add(FILE2_INO, 4, FileType::RegularFile, "file2.txt");
+        }
+
+        reply.ok();
+    }
+
+    /// Called before read; must *not* return ENOSYS or the kernel thinks "function not implemented".
+    fn open(&mut self, _req: &Request, ino: u64, flags: u32, reply: ReplyOpen) {
+        println!("open ino={}, flags={}", ino, flags);
+
+        match ino {
+            FILE1_INO | FILE2_INO => {
+                // fh = 0 (no real file handle), keep flags as-is
+                reply.opened(0, flags);
+            }
+            _ => reply.error(libc::ENOENT),
+        }
+    }
+
+    fn read(
+        &mut self,
+        _req: &Request,
+        ino: u64,
+        _fh: u64,
+        offset: i64,
+        size: u32,
+        reply: ReplyData,
+    ) {
+        println!("read ino={}, offset={}, size={}", ino, offset, size);
+
+        if ino != FILE1_INO && ino != FILE2_INO {
+            reply.error(libc::ENOENT);
+            return;
+        }
+
+        let dummy_content = b"Hello from networking filesystem!";
+        let start = offset as usize;
+        let end = (start + size as usize).min(dummy_content.len());
+
+        reply.data(&dummy_content[start..end]);
+    }
+
+    // mkdir etc. can stay, but should probably return a fresh inode instead of 1.
+}
+
+fn main() {
+    // Initialize logger
+    env_logger::init();
+
+    // Set up FUSE session
+    let fs = MyFS;
+    let mount_point = Path::new("/home/max/Desktop/storage/testfs");
+
+    let mut session = Session::new(fs, &mount_point, &[]).unwrap();
+    session.run().unwrap();
+
+    // Your program will now be running and waiting for filesystem operations
+    println!("Filesystem mounted at: {:?}", mount_point);
+}

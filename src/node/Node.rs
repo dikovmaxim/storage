@@ -3,7 +3,7 @@ use crate::filesystem::DirEntry::DirEntry;
 struct Node {
     node_id: u64,
     root_dir: Box<DirEntry>,
-    
+
 }
 
 impl Node {
@@ -19,6 +19,12 @@ impl Node {
                             created_at: 0,
                             modified_at: 0,
                             accessed_at: 0,
+                            changed_at: 0,
+                            permissions: 0o755,
+                            uid: 1000,
+                            gid: 1000,
+                            rdev: 0,
+                            flags: 0,
                         },
                     }
                 )

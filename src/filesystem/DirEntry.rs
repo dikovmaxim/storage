@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 use super::FSEntry::{FSEntry, FSEntryBase, Metadata};
+use fuse::{FileType, FileAttr};
+use time::Timespec;
 
 
 pub struct DirEntry {
@@ -18,6 +20,26 @@ impl FSEntry for DirEntry {
 
     fn get_inode(&self) -> u64 {
         self.base.inode
+    }
+
+    fn make_file_attr(&self) -> FileAttr {
+        let meta = self.get_metadata();
+        FileAttr {
+            ino: self.get_inode(),
+            size: 0,
+            blocks: 0,
+            atime: Timespec::new(meta.accessed_at as i64, 0),
+            mtime: Timespec::new(meta.modified_at as i64, 0),
+            ctime: Timespec::new(meta.changed_at as i64, 0),
+            crtime: Timespec::new(meta.created_at as i64, 0),
+            kind: FileType::Directory,
+            perm: meta.permissions,
+            nlink: 2,
+            uid: meta.uid,
+            gid: meta.gid,
+            rdev: meta.rdev,
+            flags: meta.flags,
+        }
     }
 }
 
