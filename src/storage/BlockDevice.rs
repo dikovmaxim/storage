@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::cmp::min;
+use crate::manager::Kvs::{Kvs, KvsStorable};
 
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,12 +47,14 @@ impl Block{
         self.data.clone()
     }
 
-    pub fn write_data(&mut self, data: &[u8]) -> Result<(), Box<dyn Error>> {
+    pub fn write_data(&mut self, offset: u64, data: &[u8]) -> Result<(), Box<dyn Error>> {
         println!("Writing data to block {} of block size {} with data size {}", self.index, self.data.len(), data.len());
-        if data.len() > self.data.len() {
+        if data.len() > (self.data.len() - offset as usize) {
             return Err("Data size exceeds block size".into());
         }
-        self.data[..data.len()].copy_from_slice(data);
+        for i in 0..data.len() {
+            self.data[offset as usize + i] = data[i];
+        }
         Ok(())
     }
 
@@ -137,7 +140,7 @@ impl BlockDevice {
             let space_in_block = self.block_size_bytes - offset_within_block;
             let bytes_to_write = min(remaining_data.len(), space_in_block);
             let block = self.blocks.entry(block_index).or_insert_with(|| Block::new_block(block_index)); //FIXME: calculate the hash later
-            block.write_data(&remaining_data[..bytes_to_write])?;
+            block.write_data(offset_within_block as u64, &remaining_data[..bytes_to_write])?;
             remaining_data = &remaining_data[bytes_to_write..];
             current_offset += bytes_to_write as u64;
             if remaining_data.is_empty() {
@@ -177,7 +180,19 @@ impl BlockDevice {
         return Ok(result)
     }
 
+}
 
 
+impl KvsStorable for BlockDevice {
+    fn store(&self, kvs: &Kvs) -> Result<(), Box<dyn Error>> {
+        kvs.store(self)
+    }
 
+    fn load(id: &str, kvs: &Kvs) -> Result<Self, Box<dyn Error>> {
+        kvs.load(id)
+    }
+
+    fn get_kvs_id(&self) -> String {
+        format!("BlockDevice:{}", self.id)
+    }
 }

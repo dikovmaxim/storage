@@ -1,7 +1,7 @@
 use storage::BlockDevice::BlockDevice;
-use std::error::Error;
 pub use ::core::fmt;
 
+mod manager;
 mod storage;
 
 pub fn main() {
@@ -14,10 +14,10 @@ pub fn main() {
     //println!("Read: {:?}", test_read);
 
     // Write some data
-    let write_data = vec![6u8; 96];
-    devicetest.write(1000, &write_data).unwrap();
+    let write_data = vec![6u8; 10];
+    devicetest.write(40, &write_data).unwrap();
 
-    let test_read_after_write = devicetest.read(0, 1024).unwrap();
+    let test_read_after_write = devicetest.read(0, 100).unwrap();
     let hex_output: Vec<String> = test_read_after_write.iter().map(|b| format!("{:02x}", b)).collect();
     println!("Read after write: {:?}", hex_output);
 }

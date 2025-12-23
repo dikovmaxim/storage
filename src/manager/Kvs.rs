@@ -1,9 +1,7 @@
-#![allow(unused_imports)]
-use redis::Commands;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use std::error::Error;
-use std::sync::MutexGuard;
+use redis;
 
 pub struct Kvs {
     pub conn: Arc<Mutex<redis::Connection>>,
@@ -18,24 +16,31 @@ impl Kvs {
         })
     }
 
-    fn get_redis_connection(&self) -> MutexGuard<'_, redis::Connection> {
-        self.conn.lock().unwrap()
+    //FIXME: Move from manual commands
+
+    pub fn store<T: KvsStorable + Serialize>(&self, item: &T) -> Result<(), Box<dyn Error>> {
+        let mut guard = self.conn.lock().unwrap();
+        let conn = &mut *guard;
+        let serialized = serde_json::to_string(item)?;
+        let key = item.get_kvs_id();
+        redis::cmd("SET").arg(key).arg(serialized).query::<()> (conn)?;
+        Ok(())
     }
 
-    pub fn store<T: KvsStore>(&self, item: &T) -> Result<(), Box<dyn Error>> {
-        let mut conn = self.get_redis_connection();
-        item.store(&mut conn)
-    }
-
-    pub fn load<T: KvsStore>(&self, id: &str) -> Result<T, Box<dyn Error>> {
-        let mut conn = self.get_redis_connection();
-        T::load(id, &mut conn)
+    pub fn load<T: KvsStorable + for<'de> Deserialize<'de>>(&self, id: &str) -> Result<T, Box<dyn Error>> {
+        let mut guard = self.conn.lock().unwrap();
+        let conn = &mut *guard;
+        let serialized: String = redis::cmd("GET").arg(id).query(conn)?;
+        let item: T = serde_json::from_str(&serialized)?;
+        Ok(item)
     }
 }
 
-pub trait KvsStore {
-    fn store(&self, conn: &mut redis::Connection) -> Result<(), Box<dyn Error>>;
-    fn load(id: &str, conn: &mut redis::Connection) -> Result<Self, Box<dyn Error>>
+
+pub trait KvsStorable {
+    fn store(&self, kvs: &Kvs) -> Result<(), Box<dyn Error>>;
+    fn load(id: &str, kvs: &Kvs) -> Result<Self, Box<dyn Error>>
     where
         Self: Sized;
+    fn get_kvs_id(&self) -> String;
 }
