@@ -188,7 +188,7 @@ impl KvsStorable for BlockDevice {
         kvs.store(self)
     }
 
-    fn load(id: &str, kvs: &Kvs) -> Result<Self, Box<dyn Error>> {
+    fn load(id: &str, kvs: &Kvs) -> Result<Self, Box<dyn Error>> { //FIXME: id should be u128
         kvs.load(id)
     }
 
