@@ -32,10 +32,13 @@ impl Block{
     }
 
     pub fn new_block(index: u64) -> Self {
+        println!("Creating new block with index {}", index);
+        //exactly 512 bytes of data 
+        let empty_data = vec![0u8; 512];
         Block {
             index,
             hash: [0u8; 32],
-            data: vec![0u8; 4096], //default block size
+            data: empty_data,
         }
     }
 
@@ -44,10 +47,11 @@ impl Block{
     }
 
     pub fn write_data(&mut self, data: &[u8]) -> Result<(), Box<dyn Error>> {
-        if data.len() != self.data.len() {
-            return Err("Data size does not match block size".into());
+        println!("Writing data to block {} of block size {} with data size {}", self.index, self.data.len(), data.len());
+        if data.len() > self.data.len() {
+            return Err("Data size exceeds block size".into());
         }
-        println!("Writing {} bytes to block {}", data.len(), self.index);
+        self.data[..data.len()].copy_from_slice(data);
         Ok(())
     }
 
@@ -55,8 +59,8 @@ impl Block{
         if length != self.data.len() {
             return Err("Requested length does not match block size".into());
         }
-        //trim the data to the requested length
-        Ok(vec![0u8; length])
+        let data = self.data[..length].to_vec();
+        Ok(data) 
     }
 
 
@@ -76,7 +80,7 @@ impl BlockDevice {
         return BlockDevice {
             id,
             logical_size_bytes,
-            block_size_bytes: 4096,
+            block_size_bytes: 512,
             generation: 1,
             blocks: BTreeMap::new(),
         }
@@ -121,13 +125,15 @@ impl BlockDevice {
         let block_indices = self.translate_span_to_block_indices(byte_offset, data.len())
             .ok_or("Byte offset out of bounds")?;
 
+        println!("Writing to block indices: {:?}", block_indices);
+
         let mut remaining_data = data;
         let mut current_offset = byte_offset;
 
         for &block_index in &block_indices {
             let (_, offset_within_block) = self.translate_byte_to_block_index(current_offset)
                 .ok_or("Byte offset out of bounds")?;
-            
+            println!("For block index {}, offset within block: {}", block_index, offset_within_block);
             let space_in_block = self.block_size_bytes - offset_within_block;
             let bytes_to_write = min(remaining_data.len(), space_in_block);
             let block = self.blocks.entry(block_index).or_insert_with(|| Block::new_block(block_index)); //FIXME: calculate the hash later
