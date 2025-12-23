@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 use redis::Commands;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
@@ -17,29 +18,18 @@ impl Kvs {
         })
     }
 
-    pub fn init(&self) -> Result<(), Box<dyn Error>> {
-        // Create empty directory
-        let empty_dir = crate::storage::Directory::Directory {
-            id: 1, // Root dir id
-            entries: vec![],
-        };
-        empty_dir.store(&mut *self.conn.lock().unwrap())?;
-        println!("Initialized empty root directory with id 1");
-
-        // Create root inode pointing to it
-        let root_inode = crate::storage::Inode::Inode {
-            id: crate::storage::Inode::ROOT_INODE,
-            target: 1,
-            kind: crate::storage::Inode::InodeKind::Directory,
-        };
-        root_inode.store(&mut *self.conn.lock().unwrap())?;
-        println!("Initialized root inode with id {}", crate::storage::Inode::ROOT_INODE);
-
-        Ok(())
+    fn get_redis_connection(&self) -> MutexGuard<'_, redis::Connection> {
+        self.conn.lock().unwrap()
     }
 
-    pub fn get_redis_connection(&self) -> MutexGuard<redis::Connection> {
-        self.conn.lock().unwrap()
+    pub fn store<T: KvsStore>(&self, item: &T) -> Result<(), Box<dyn Error>> {
+        let mut conn = self.get_redis_connection();
+        item.store(&mut conn)
+    }
+
+    pub fn load<T: KvsStore>(&self, id: &str) -> Result<T, Box<dyn Error>> {
+        let mut conn = self.get_redis_connection();
+        T::load(id, &mut conn)
     }
 }
 

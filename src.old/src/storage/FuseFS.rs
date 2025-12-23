@@ -1,6 +1,7 @@
+#![allow(unused_imports)]
 use fuse::{
     FileType, Request, FileAttr, Filesystem, ReplyAttr, ReplyDirectory,
-    ReplyData, ReplyEntry, ReplyOpen, Session,
+    ReplyData, ReplyEntry, ReplyOpen, ReplyCreate, Session,
 };
 use time::Timespec;
 use std::ffi::OsStr;
@@ -10,6 +11,7 @@ use crate::manager::Kvs::Kvs;
 use crate::storage::Inode::Inode;
 use crate::storage::Inode::InodeKind;
 use crate::storage::Directory::Directory;
+use crate::storage::File::File;
 use libc;
 
 const TTL: Timespec = Timespec { sec: 1, nsec: 0 }; // 1s cache
@@ -23,7 +25,7 @@ struct MyFS {
 }
 
 impl MyFS {
-    fn new(storage: Kvs) -> Self {
+    <fn new(storage: Kvs) -> Self {>
         MyFS { storage  }
     }
 
@@ -72,38 +74,60 @@ fn file_attr(ino: u64) -> FileAttr {
 
 
 impl Filesystem for MyFS {
+
+    //IMPLEMENTED
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
-        println!("getattr ino={}", ino);
-
-        match ino {
-            ROOT_INO | FILE1_INO | FILE2_INO => {
-                let attr = file_attr(ino);
-                reply.attr(&TTL, &attr);
-            }
-            _ => reply.error(libc::ENOENT),
-        }
-    }
-
-    /// Map (parent inode, name) -> inode
-    fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) { // IMPLEMENTED
-        println!("lookup parent={}, name={:?}", parent, name);
-
-        let inode_used = Inode::get_by_id(parent as u128, &mut self.get_kvs());
-        println!("Inode fetched from KVS: {:?}", inode_used);
-
-        //if inode result is error, return ENOENT
+        let inode_used = Inode::get_by_id(ino as u128, &mut self.get_kvs());
         if inode_used.is_err() {
             reply.error(libc::ENOENT);
             return;
         }
 
-
         let inode = inode_used.unwrap();
         let attr = inode.get_attribute(&mut self.get_kvs());
+        reply.attr(&TTL, &attr);
+    }
 
+    //IMPLEMENTED
+    /// Map (parent inode, name) -> inode
+    fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
+        println!("lookup called with parent={}, name={:?}", parent, name);
+
+        // Fetch the parent inode
+        let inode_used = Inode::get_by_id(parent as u128, &mut self.get_kvs());
+        if inode_used.is_err() {
+            reply.error(libc::ENOENT);
+            return;
+        }
+
+        let inode = inode_used.unwrap();
+        let target = inode.get_target(&mut self.get_kvs());
+        if target.is_err() {
+            reply.error(libc::ENOENT);
+            return;
+        }
+
+        // Check if the file exists in the directory
+        let directory = Directory::get_by_id(target.unwrap().1, &mut self.get_kvs());
+        if directory.is_err() {
+            reply.error(libc::ENOENT);
+            return;
+        }
+
+        let dir = directory.unwrap();
+        let entry = dir.find_entry(name.to_str().unwrap(), &mut self.get_kvs());
+        if entry.is_none() {
+            reply.error(libc::ENOENT);
+            return;
+        }
+
+        // If the file exists, return its attributes
+        let entry_inode = entry.unwrap();
+        let attr = entry_inode.get_attribute(&mut self.get_kvs());
         reply.entry(&TTL, &attr, 0);
     }
 
+    //IMPLEMENTED
     fn readdir(
         &mut self,
         _req: &Request,
@@ -112,17 +136,12 @@ impl Filesystem for MyFS {
         offset: i64,
         mut reply: ReplyDirectory,
     ) {
-        println!("readdir ino={}, offset={}", ino, offset);
-
         let inode_used = Inode::get_by_id(ino as u128, &mut self.get_kvs());
         if inode_used.is_err() {
             reply.error(libc::ENOENT);
             return;
         }
-        println!("Inode fetched from KVS: {:?}", inode_used);
-
         let target: (InodeKind, u128) = inode_used.unwrap().get_target(&mut self.get_kvs()).unwrap();
-        println!("Inode target fetched: {:?}", target);
 
         if target.0 != InodeKind::Directory {
             reply.error(libc::ENOTDIR);
@@ -176,7 +195,36 @@ impl Filesystem for MyFS {
         reply.data(&dummy_content[start..end]);
     }
 
-    // mkdir etc. can stay, but should probably return a fresh inode instead of 1.
+
+    fn create(&mut self, _req: &Request, parent: u64, name: &OsStr, mode: u32, umask: u32, reply: ReplyCreate) { //Create a new file
+        println!("create parent={}, name={:?}, mode={}, umask={}", parent, name, mode, umask);
+
+        // Fetch the parent inode
+        let parent_inode = Inode::get_by_id(parent as u128, &mut self.get_kvs());
+        if parent_inode.is_err() {
+            reply.error(libc::ENOENT);
+            return;
+        }
+
+        let parent_inode = parent_inode.unwrap();
+        let parent_target = parent_inode.get_target(&mut self.get_kvs());
+        if parent_target.is_err() || parent_target.unwrap().0 != InodeKind::Directory {
+            reply.error(libc::ENOTDIR);
+            return;
+        }
+
+        // Create a new inode for the file
+        let new_instances = File::create_new(
+            parent as u128,
+            name.to_str().unwrap().to_string(),
+            &mut self.get_kvs()
+        );
+
+        let (new_inode, new_file) = new_instances.unwrap();
+        let attr = new_inode.get_attribute(&mut self.get_kvs());
+
+        reply.created(&TTL, &attr, 0, 0, 0); // Updated to use ReplyCreate's `created` method
+    }
 }
 
 pub fn initFuse(kvs: Kvs) {

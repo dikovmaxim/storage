@@ -73,6 +73,17 @@ impl Inode {
             }
         }
     }
+
+    pub fn swap_target(&mut self, new_target: DataId, new_taget_kind: InodeKind, kvs: &mut &Kvs) -> Result<(), Box<dyn Error>> {
+        self.target = new_target;
+        self.kind = new_taget_kind;
+        // Store the updated inode back to KVS
+        {
+            let mut conn = kvs.get_redis_connection();
+            self.store(&mut *conn)?;
+        }
+        Ok(())
+    }
 }
 
 impl TableLookup for Inode {
@@ -85,14 +96,12 @@ impl crate::manager::Kvs::KvsStore for Inode {
     fn store(&self, conn: &mut redis::Connection) -> Result<(), Box<dyn Error>> {
         let key = Self::get_table_id_by_id(self.id);
         let value = serde_json::to_string(self)?;
-        println!("Storing Inode with key: {}", key);
         conn.set(key, value).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
     }
 
     fn load(id: &str, conn: &mut redis::Connection) -> Result<Self, Box<dyn Error>> {
         let value: String = conn.get(id).map_err(|e| Box::new(e) as Box<dyn Error>)?;
         let inode: Inode = serde_json::from_str(&value)?;
-        println!("Loaded Inode with id: {}", id);
         Ok(inode)
     }
 }
